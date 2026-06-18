@@ -1,4 +1,4 @@
-name: Build Flutter Android
+name: Build Flutter Android From ZIP
 
 on:
   push:
@@ -10,8 +10,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Find and unzip project ZIP
+        run: |
+          echo "Searching for ZIP file..."
+
+          ZIP_FILE=$(find . -maxdepth 4 -type f -name "*.zip" ! -path "./.git/*" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No ZIP file found in repository."
+            echo "Repo files:"
+            find . -maxdepth 3 -type f
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          rm -rf extracted_project
+          mkdir extracted_project
+
+          unzip -q "$ZIP_FILE" -d extracted_project
+
+          echo "ZIP extracted."
+
+      - name: Find Flutter project
+        run: |
+          PROJECT_DIR=$(find extracted_project -maxdepth 6 -name pubspec.yaml -not -path "*/.pub-cache/*" | head -n 1 | xargs dirname)
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "pubspec.yaml not found inside extracted ZIP."
+            echo "Extracted files:"
+            find extracted_project -maxdepth 5 -type f
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Flutter project found at: $PROJECT_DIR"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -26,8 +62,15 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Flutter config
+        run: |
+          flutter config --no-analytics
+          flutter config --no-cli-animations
+
       - name: Fix Flutter project name
         run: |
+          cd "$PROJECT_DIR"
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -51,22 +94,23 @@ jobs:
           pubspec.write_text("\n".join(fixed) + "\n", encoding="utf-8")
           PY
 
-      - name: Flutter config
-        run: |
-          flutter config --no-analytics
-          flutter config --no-cli-animations
-
       - name: Flutter pub get
-        run: flutter pub get
+        run: |
+          cd "$PROJECT_DIR"
+          flutter pub get
 
       - name: Create Android platform if missing
         run: |
+          cd "$PROJECT_DIR"
+
           if [ ! -d "android" ]; then
             flutter create . --platforms=android --project-name chaleshino --org mk.kadkhodai
           fi
 
       - name: Harden Android package and label
         run: |
+          cd "$PROJECT_DIR"
+
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -118,22 +162,28 @@ jobs:
           PY
 
       - name: Analyze
-        run: flutter analyze --no-fatal-infos
+        run: |
+          cd "$PROJECT_DIR"
+          flutter analyze --no-fatal-infos
 
       - name: Build APK
-        run: flutter build apk --release --build-name=1.0.0 --build-number=1
+        run: |
+          cd "$PROJECT_DIR"
+          flutter build apk --release --build-name=1.0.0 --build-number=1
 
       - name: Build AAB
-        run: flutter build appbundle --release --build-name=1.0.0 --build-number=1
+        run: |
+          cd "$PROJECT_DIR"
+          flutter build appbundle --release --build-name=1.0.0 --build-number=1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: chaleshino-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: chaleshino-aab
-          path: build/app/outputs/bundle/release/app-release.aab
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/bundle/release/app-release.aab
