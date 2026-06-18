@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,25 +26,96 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create Android platform if missing
-        run: |
-          if [ ! -d "android" ]; then
-            flutter create . --platforms=android --org com.chaleshino
-          fi
-
-      - name: Harden Android metadata
+      - name: Fix Flutter project name
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          manifest = Path('android/app/src/main/AndroidManifest.xml')
-          text = manifest.read_text(encoding='utf-8')
-          text = text.replace('android:label="chaleshino"', 'android:label="چالشینو"')
-          text = text.replace('android:label="Chaleshino"', 'android:label="چالشینو"')
-          manifest.write_text(text, encoding='utf-8')
+
+          pubspec = Path("pubspec.yaml")
+          text = pubspec.read_text(encoding="utf-8")
+
+          lines = text.splitlines()
+          fixed = []
+          changed = False
+
+          for line in lines:
+              if line.startswith("name:"):
+                  fixed.append("name: chaleshino")
+                  changed = True
+              else:
+                  fixed.append(line)
+
+          if not changed:
+              fixed.insert(0, "name: chaleshino")
+
+          pubspec.write_text("\n".join(fixed) + "\n", encoding="utf-8")
           PY
+
+      - name: Flutter config
+        run: |
+          flutter config --no-analytics
+          flutter config --no-cli-animations
 
       - name: Flutter pub get
         run: flutter pub get
+
+      - name: Create Android platform if missing
+        run: |
+          if [ ! -d "android" ]; then
+            flutter create . --platforms=android --project-name chaleshino --org mk.kadkhodai
+          fi
+
+      - name: Harden Android package and label
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          package_name = "mk.kadkhodai.chaleshino"
+
+          gradle_paths = [
+              Path("android/app/build.gradle"),
+              Path("android/app/build.gradle.kts"),
+          ]
+
+          for p in gradle_paths:
+              if not p.exists():
+                  continue
+
+              text = p.read_text(encoding="utf-8")
+
+              text = re.sub(
+                  r'applicationId\s+[\'"][^\'"]+[\'"]',
+                  f'applicationId "{package_name}"',
+                  text
+              )
+
+              text = re.sub(
+                  r'namespace\s+[\'"][^\'"]+[\'"]',
+                  f'namespace "{package_name}"',
+                  text
+              )
+
+              text = re.sub(
+                  r'applicationId\s*=\s*[\'"][^\'"]+[\'"]',
+                  f'applicationId = "{package_name}"',
+                  text
+              )
+
+              text = re.sub(
+                  r'namespace\s*=\s*[\'"][^\'"]+[\'"]',
+                  f'namespace = "{package_name}"',
+                  text
+              )
+
+              p.write_text(text, encoding="utf-8")
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          if manifest.exists():
+              text = manifest.read_text(encoding="utf-8")
+              text = re.sub(r'android:label="[^"]*"', 'android:label="چالشینو"', text)
+              manifest.write_text(text, encoding="utf-8")
+          PY
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos
@@ -57,11 +129,11 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: chaleshino-flutter-apk
+          name: chaleshino-apk
           path: build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
-          name: chaleshino-flutter-aab
+          name: chaleshino-aab
           path: build/app/outputs/bundle/release/app-release.aab
